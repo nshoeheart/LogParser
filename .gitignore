@@ -11,4 +11,4 @@ Thumbs.db
 out/
 .idea/workspace.xml
 .idea/tasks.xml
-
+*.ddl
