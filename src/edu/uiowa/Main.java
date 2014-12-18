@@ -1,6 +1,7 @@
 package edu.uiowa;
 
-import javax.swing.*;
+import com.mysql.jdbc.StringUtils;
+
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -8,9 +9,13 @@ import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Scanner;
 
 public class Main {
+    private static final String USER_IDENTITY = "USER_IDENTITY";
+    private static final String USER_IP = "USER_IP";
 
     public static void main(String[] args) {
         try {
@@ -22,7 +27,7 @@ public class Main {
 
             Connection conn = null;
             PreparedStatement preparedStatement = null;
-            String sql = "INSERT INTO LOG_METRICS (TIME, LOG_TYPE, USER_IP, CONTROLLER, ROUTE, RESPONSE_TIME) VALUES (?,?,?,?,?,?)";
+            String sql = "INSERT INTO LOG_METRICS (TIME, LOG_TYPE, USER_IP, USER_IDENT,CONTROLLER, ROUTE, RESPONSE_TIME) VALUES (?,?,?,?,?,?,?)";
 
             try {
                 Class.forName(JDBC_DRIVER);
@@ -31,88 +36,87 @@ public class Main {
                 System.out.println("Successfully connected to database.\n");
                 preparedStatement = conn.prepareStatement(sql);
 
-                JFileChooser chooser = new JFileChooser();
-                File file = null;
 
-                System.out.println("Select a log file...");
-                int returnValue = chooser.showOpenDialog(null);
-                if (returnValue == JFileChooser.APPROVE_OPTION) {
-                    file = chooser.getSelectedFile();
-                    System.out.println("Log file loaded.\n");
-                }
+                File path = new File(config.getProperty("file_path"));
 
-                if (file != null) {
-                    try {
-                        Scanner scanner = new Scanner(file);
-                        int numRows = 0;
-                        int metrics = 0;
-                        int entries = 0;
-                        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
+                if (path.isDirectory()) {
 
-                        System.out.println("Parsing log entries...");
-                        //System.out.print("Entries scanned: 0");
-                        long start = System.currentTimeMillis();
-                        while (scanner.hasNextLine()) {
-                            String[] logParts = scanner.nextLine().split(" ", 8);
-                            LOG_TYPE type = null;
-                            if (logParts.length >= 3) {
-                                try {
-                                    type = LOG_TYPE.valueOf(logParts[2]);
-                                    entries++;
-                                } catch (IllegalArgumentException e) {
-                                    // not the start of a log entry, do nothing
-                                }
-                            }
+                    for (File file : path.listFiles()) {
+                        if (file != null && file.isFile()) {
+                            System.out.println(String.format("Processing log file %s", file.getName()));
+                            try {
+                                Scanner scanner = new Scanner(file);
+                                int numRows = 0;
+                                int metrics = 0;
+                                int entries = 0;
+                                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
 
-                            if (type == LOG_TYPE.DIAG) {
-                                Date time = dateFormat.parse(logParts[0] + " " + logParts[1]);
-                                String userAndIP = logParts[5];
-                                String controller = logParts[6];
-                                String message = " " + logParts[7];
-
-                                if (message.contains("| metrics |")) {
-                                    String[] messageParts = message.split(" \\| ");
-                                    if (messageParts.length == 6) {
-                                        String route = messageParts[4];
-                                        int respTime = Integer.valueOf(messageParts[5].split(" ")[0]);
-
-                                        LogEntry entry = new LogEntry(time, type, userAndIP, controller, route, respTime);
-                                        metrics++;
-
-                                        preparedStatement.setTimestamp(1, new Timestamp(entry.time.getTime()));
-                                        preparedStatement.setString(2, entry.type.name());
-                                        preparedStatement.setString(3, entry.userAndIP);
-                                        preparedStatement.setString(4, entry.controller);
-                                        preparedStatement.setString(5, entry.route);
-                                        preparedStatement.setInt(6, entry.responseTime);
-
-                                        preparedStatement.execute();
+                                System.out.println("Parsing log entries...");
+                                //System.out.print("Entries scanned: 0");
+                                long start = System.currentTimeMillis();
+                                while (scanner.hasNextLine()) {
+                                    String[] logParts = scanner.nextLine().split(" ", 8);
+                                    LOG_TYPE type = null;
+                                    if (logParts.length >= 3) {
+                                        try {
+                                            type = LOG_TYPE.valueOf(logParts[2]);
+                                            entries++;
+                                        } catch (IllegalArgumentException e) {
+                                            // not the start of a log entry, do nothing
+                                        }
                                     }
-                                }
-                            }
-                            numRows++;
+
+                                    if (type == LOG_TYPE.DIAG) {
+                                        Date time = dateFormat.parse(logParts[0] + " " + logParts[1]);
+                                        Map<String, String> userAndIP = determineUserInfo(logParts[5]);
+                                        String controller = logParts[6];
+                                        String message = " " + logParts[7];
+
+                                        if (message.contains("| metrics |")) {
+                                            String[] messageParts = message.split(" \\| ");
+                                            if (messageParts.length == 6) {
+                                                String route = messageParts[4];
+                                                int respTime = Integer.valueOf(messageParts[5].split(" ")[0]);
+
+                                                LogEntry entry = new LogEntry(time, type, userAndIP.get(USER_IP), userAndIP.get(USER_IDENTITY), controller, route, respTime);
+                                                metrics++;
+
+                                                preparedStatement.setTimestamp(1, new Timestamp(entry.time.getTime()));
+                                                preparedStatement.setString(2, entry.type.name());
+                                                preparedStatement.setString(3, entry.ip);
+                                                preparedStatement.setString(4, entry.user);
+                                                preparedStatement.setString(5, entry.controller);
+                                                preparedStatement.setString(6, entry.route);
+                                                preparedStatement.setInt(7, entry.responseTime);
+
+                                                preparedStatement.execute();
+                                            }
+                                        }
+                                    }
+                                    numRows++;
 //                        if (entries % 10000 == 0) {
 //                            System.out.print(entries);
 //                        } else if (entries % 2500 == 0) {
 //                            System.out.print(".");
 //                        }
+                                }
+
+                                System.out.println("Done!\n");
+                                System.out.println("Total metrics entries parsed: " + metrics);
+                                System.out.println("Total log entries: " + entries);
+                                System.out.println("Total rows: " + numRows);
+
+                                long time = System.currentTimeMillis() - start;
+                                long secs = (time / 1000) % 60;
+                                long mins = (time / 1000) / 60;
+                                System.out.println("Total time - " + (mins != 0 ? mins : 0) + ":" + (secs < 10 ? "0" + secs : secs));
+                            } catch (FileNotFoundException e) {
+                                e.printStackTrace();
+                            } catch (ParseException p) {
+                                p.printStackTrace();
+                            }
                         }
-
-                        System.out.println("Done!\n");
-                        System.out.println("Total metrics entries parsed: " + metrics);
-                        System.out.println("Total log entries: " + entries);
-                        System.out.println("Total rows: " + numRows);
-
-                        long time = System.currentTimeMillis() - start;
-                        long secs = (time / 1000) % 60;
-                        long mins = (time / 1000) / 60;
-                        System.out.println("Total time - " + (mins != 0 ? mins : 0) + ":" + (secs < 10 ? "0" + secs : secs));
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace();
-                    } catch (ParseException p) {
-                        p.printStackTrace();
-                    }
-                }
+            }}
             } catch (SQLException e) {
                 e.printStackTrace();
             } catch (Exception e) {
@@ -132,5 +136,33 @@ public class Main {
         } catch (IOException e) {
             System.out.println("Could not load config file");
         }
+    }
+
+    private static Map<String, String> determineUserInfo(String userField) {
+        Map<String, String> userAndIp = new HashMap<String, String>();
+        userField = userField.replace("[", "");
+        userField = userField.replace("]", "");
+
+        if(userField.contains(",")) {
+            String[] pieces = userField.split(",");
+            userAndIp.put(USER_IDENTITY, pieces[0]);
+            userAndIp.put(USER_IP, pieces[1]);
+        } else if(userField.contains("/")) {
+            String[] pieces = userField.split("/");
+            userAndIp.put(USER_IDENTITY, pieces[0]);
+            userAndIp.put(USER_IP, pieces[1]);
+        } else if (userField.contains(" ")) {
+            String[] pieces = userField.split(" ");
+            if(pieces.length > 1) {
+                userAndIp.put(USER_IDENTITY, pieces[0]);
+                userAndIp.put(USER_IP, pieces[1]);
+            } else {
+                userAndIp.put(USER_IP, userField.replace(" ", ""));
+            }
+        } else  {
+            userAndIp.put(USER_IP, userField);
+        }
+
+        return userAndIp;
     }
 }
