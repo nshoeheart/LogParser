@@ -1,7 +1,5 @@
 package edu.uiowa;
 
-import com.mysql.jdbc.StringUtils;
-
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -14,6 +12,7 @@ import java.util.Map;
 import java.util.Scanner;
 
 public class Main {
+    private static String routeKey;
     private static final String USER_IDENTITY = "USER_IDENTITY";
     private static final String USER_IP = "USER_IP";
 
@@ -24,6 +23,7 @@ public class Main {
             final String DB_URL = config.getProperty("db_url");
             final String USER = config.getProperty("user");
             final String PASS = config.getProperty("pass");
+            routeKey = config.getProperty("route_contains");
 
             Connection conn = null;
             PreparedStatement preparedStatement = null;
@@ -55,7 +55,9 @@ public class Main {
                                 //System.out.print("Entries scanned: 0");
                                 long start = System.currentTimeMillis();
                                 while (scanner.hasNextLine()) {
-                                    String[] logParts = scanner.nextLine().split(" ", 8);
+                                    String line = scanner.nextLine();
+                                    String[] logParts = line.split(" ", 8);
+                                    if(meetsCondition(line)) {
                                     LOG_TYPE type = null;
                                     if (logParts.length >= 3) {
                                         try {
@@ -93,12 +95,8 @@ public class Main {
                                             }
                                         }
                                     }
+                                }
                                     numRows++;
-//                        if (entries % 10000 == 0) {
-//                            System.out.print(entries);
-//                        } else if (entries % 2500 == 0) {
-//                            System.out.print(".");
-//                        }
                                 }
 
                                 System.out.println("Done!\n");
@@ -116,7 +114,8 @@ public class Main {
                                 p.printStackTrace();
                             }
                         }
-            }}
+                    }
+                }
             } catch (SQLException e) {
                 e.printStackTrace();
             } catch (Exception e) {
@@ -140,29 +139,46 @@ public class Main {
 
     private static Map<String, String> determineUserInfo(String userField) {
         Map<String, String> userAndIp = new HashMap<String, String>();
-        userField = userField.replace("[", "");
-        userField = userField.replace("]", "");
 
-        if(userField.contains(",")) {
-            String[] pieces = userField.split(",");
-            userAndIp.put(USER_IDENTITY, pieces[0]);
-            userAndIp.put(USER_IP, pieces[1]);
-        } else if(userField.contains("/")) {
-            String[] pieces = userField.split("/");
-            userAndIp.put(USER_IDENTITY, pieces[0]);
-            userAndIp.put(USER_IP, pieces[1]);
-        } else if (userField.contains(" ")) {
-            String[] pieces = userField.split(" ");
-            if(pieces.length > 1) {
-                userAndIp.put(USER_IDENTITY, pieces[0]);
-                userAndIp.put(USER_IP, pieces[1]);
+        try {
+            userField = userField.replace("[", "");
+            userField = userField.replace("]", "");
+
+            if (userField.contains(",")) {
+                String[] pieces = userField.split(",");
+                if(pieces.length > 1) {
+                    userAndIp.put(USER_IDENTITY, pieces[0]);
+                    userAndIp.put(USER_IP, pieces[1]);
+                } else {
+                    userAndIp.put(USER_IP, pieces[0]);
+                }
+            } else if (userField.contains("/")) {
+                String[] pieces = userField.split("/");
+                if(pieces.length > 1) {
+                    userAndIp.put(USER_IDENTITY, pieces[0]);
+                    userAndIp.put(USER_IP, pieces[1]);
+                } else {
+                    userAndIp.put(USER_IP, pieces[0]);
+                }
+            } else if (userField.contains(" ")) {
+                String[] pieces = userField.split(" ");
+                if (pieces.length > 1) {
+                    userAndIp.put(USER_IDENTITY, pieces[0]);
+                    userAndIp.put(USER_IP, pieces[1]);
+                } else {
+                    userAndIp.put(USER_IP, userField.replace(" ", ""));
+                }
             } else {
-                userAndIp.put(USER_IP, userField.replace(" ", ""));
+                userAndIp.put(USER_IP, userField);
             }
-        } else  {
-            userAndIp.put(USER_IP, userField);
+        } catch (Exception e) {
+            System.out.println(userField + e.getMessage());
         }
 
         return userAndIp;
+    }
+
+    private static boolean meetsCondition(String logLine) {
+        return routeKey == null || logLine.contains(routeKey);
     }
 }
